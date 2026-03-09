@@ -1,0 +1,29 @@
+# docker-compose.yml
+#
+# Volume strategy:
+#   • ./data         → persists workspace registry across restarts
+#   • ${DOCS_DIR:-~} → your local documents root, mounted read-only at /docs
+#                      inside the container.  Register workspaces using /docs/...
+#
+# Override DOCS_DIR to mount a different directory, e.g.:
+#   DOCS_DIR=/Users/you/Notes docker compose up
+#
+# Quick start:
+#   docker compose up --build
+#   open http://localhost:3000
+
+services:
+  markview:
+    build: .
+    image: markview:latest
+    container_name: markview
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      # Persist workspaces.json between restarts
+      - ./data:/app/data
+      # Mount your docs root read-only; use /docs/<path> when registering workspaces
+      - ${DOCS_DIR:-~}:/docs:ro
+    environment:
+      PORT: 3000

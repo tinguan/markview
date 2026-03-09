@@ -1,0 +1,904 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MarkView -- Local Markdown Viewer</title>
+<style>
+  :root {
+    --bg: #0d1117; --bg2: #161b22; --bg3: #21262d; --border: #30363d;
+    --fg: #e6edf3; --fg2: #8b949e; --accent: #58a6ff; --accent2: #3fb950;
+    --warn: #d29922; --err: #f85149; --sidebar-w: 300px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif; background: var(--bg); color: var(--fg); display: flex; height: 100vh; overflow: hidden; }
+
+  /* ── Sidebar ── */
+  #sidebar { width: var(--sidebar-w); min-width: var(--sidebar-w); background: var(--bg2); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+  #sidebar-header { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  #sidebar-header h1 { font-size: 15px; font-weight: 600; margin-bottom: 8px; letter-spacing: -0.3px; display: flex; align-items: center; gap: 8px; }
+  #sidebar-header h1 span { opacity: .5; font-weight: 400; font-size: 12px; }
+
+  /* Workspace selector */
+  #ws-bar { display: flex; gap: 6px; margin-bottom: 8px; align-items: center; }
+  #ws-select { flex: 1; padding: 5px 8px; border-radius: 5px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font-size: 12px; outline: none; cursor: pointer; appearance: none; -webkit-appearance: none; }
+  #ws-select:focus { border-color: var(--accent); }
+  .ws-btn { width: 28px; height: 28px; border-radius: 5px; border: 1px solid var(--border); background: transparent; color: var(--fg2); cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; transition: all .15s; flex-shrink: 0; }
+  .ws-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .ws-btn.danger:hover { border-color: var(--err); color: var(--err); }
+
+  /* Branch indicator */
+  #branch-indicator { display: none; font-size: 11px; color: var(--fg2); padding: 2px 0 6px; }
+  #branch-indicator.visible { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+  .branch-tag { padding: 2px 8px; border-radius: 10px; font-size: 11px; cursor: pointer; transition: all .15s; border: 1px solid var(--border); background: transparent; color: var(--fg2); }
+  .branch-tag:hover { border-color: var(--accent); color: var(--accent); }
+  .branch-tag.active { background: rgba(88,166,255,.15); color: var(--accent); border-color: var(--accent); }
+  .branch-tag-add { padding: 2px 8px; border-radius: 10px; font-size: 11px; cursor: pointer; border: 1px dashed var(--border); background: transparent; color: var(--fg2); }
+  .branch-tag-add:hover { border-color: var(--accent2); color: var(--accent2); }
+
+  #search-box { width: 100%; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font-size: 13px; outline: none; }
+  #search-box:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(88,166,255,.25); }
+  #search-box::placeholder { color: var(--fg2); }
+  #nav { flex: 1; overflow-y: auto; padding: 8px 0; }
+  #nav::-webkit-scrollbar { width: 6px; } #nav::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .nav-section { margin-bottom: 2px; }
+  .nav-section-title { display: flex; align-items: center; gap: 6px; padding: 6px 16px; font-size: 12px; font-weight: 600; color: var(--fg2); text-transform: uppercase; letter-spacing: .5px; cursor: pointer; user-select: none; }
+  .nav-section-title:hover { color: var(--fg); }
+  .nav-section-title .arrow { transition: transform .15s; font-size: 10px; }
+  .nav-section.collapsed .arrow { transform: rotate(-90deg); }
+  .nav-section.collapsed .nav-items { display: none; }
+  .nav-item { display: block; padding: 5px 16px 5px 28px; font-size: 13px; color: var(--fg2); cursor: pointer; text-decoration: none; border-left: 2px solid transparent; transition: all .1s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .nav-item:hover { color: var(--fg); background: var(--bg3); }
+  .nav-item.active { color: var(--accent); border-left-color: var(--accent); background: rgba(88,166,255,.08); font-weight: 500; }
+  .nav-item.nested-1 { padding-left: 40px; }
+  .nav-item.nested-2 { padding-left: 52px; }
+  .nav-item.nested-3 { padding-left: 64px; }
+  .search-highlight { background: rgba(210,153,34,.3); border-radius: 2px; padding: 0 1px; }
+
+  /* ── Main Content ── */
+  #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  #topbar { padding: 10px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--fg2); background: var(--bg2); min-height: 42px; }
+  #breadcrumb { flex: 1; }
+  #breadcrumb span { cursor: pointer; } #breadcrumb span:hover { color: var(--accent); }
+  #breadcrumb .sep { margin: 0 4px; opacity: .5; }
+
+  #content-wrap { flex: 1; overflow-y: auto; padding: 32px 48px 64px; max-width: 960px; }
+  #content-wrap::-webkit-scrollbar { width: 6px; } #content-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* ── Markdown Rendering ── */
+  .md h1 { font-size: 28px; font-weight: 700; margin: 0 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  .md h2 { font-size: 22px; font-weight: 600; margin: 32px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  .md h3 { font-size: 17px; font-weight: 600; margin: 24px 0 8px; }
+  .md h4 { font-size: 15px; font-weight: 600; margin: 20px 0 6px; }
+  .md h5 { font-size: 14px; font-weight: 600; margin: 16px 0 4px; }
+  .md h6 { font-size: 13px; font-weight: 600; margin: 16px 0 4px; color: var(--fg2); }
+  .md p { margin: 8px 0; line-height: 1.65; }
+  .md ul, .md ol { padding-left: 24px; margin: 8px 0; }
+  .md li { margin: 4px 0; line-height: 1.6; }
+  .md li ul, .md li ol { margin: 2px 0; }
+  .md blockquote { border-left: 3px solid var(--accent); padding: 8px 16px; margin: 12px 0; color: var(--fg2); background: rgba(88,166,255,.05); border-radius: 0 4px 4px 0; }
+  .md code { font-family: "SF Mono", "Fira Code", monospace; font-size: 0.88em; background: var(--bg3); padding: 2px 6px; border-radius: 4px; }
+  .md pre { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 16px; overflow-x: auto; margin: 12px 0; line-height: 1.5; }
+  .md pre code { background: none; padding: 0; font-size: 13px; }
+  .md table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+  .md th, .md td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
+  .md th { background: var(--bg3); font-weight: 600; }
+  .md tr:nth-child(even) { background: rgba(255,255,255,.02); }
+  .md a { color: var(--accent); text-decoration: none; } .md a:hover { text-decoration: underline; }
+  .md hr { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
+  .md strong { font-weight: 600; }
+  .md img { max-width: 100%; }
+  .md .task-list-item { list-style: none; margin-left: -20px; }
+  .md .task-list-item input { margin-right: 6px; }
+
+  /* ── Welcome ── */
+  #welcome { text-align: center; padding-top: 12vh; color: var(--fg2); }
+  #welcome h2 { font-size: 24px; color: var(--fg); margin-bottom: 8px; }
+  #welcome p { font-size: 14px; margin: 4px 0; }
+  #welcome .hint { margin-top: 24px; font-size: 12px; color: var(--fg2); }
+  #welcome .hint kbd { background: var(--bg3); border: 1px solid var(--border); padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 11px; }
+
+  /* ── Search Results ── */
+  .search-result { padding: 10px 16px; border-bottom: 1px solid var(--border); cursor: pointer; }
+  .search-result:hover { background: var(--bg3); }
+  .search-result .sr-title { font-size: 14px; font-weight: 500; color: var(--accent); margin-bottom: 2px; }
+  .search-result .sr-path { font-size: 11px; color: var(--fg2); }
+  .search-result .sr-snippet { font-size: 12px; color: var(--fg2); margin-top: 4px; line-height: 1.5; }
+
+  /* ── Modal / Dialog ── */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 1000; display: flex; align-items: center; justify-content: center; }
+  .modal-overlay.hidden { display: none; }
+  .modal { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; width: 560px; max-width: 90vw; max-height: 80vh; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+  .modal-head { padding: 16px 20px; border-bottom: 1px solid var(--border); font-size: 15px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+  .modal-head .close-btn { background: none; border: none; color: var(--fg2); font-size: 20px; cursor: pointer; padding: 0 4px; }
+  .modal-head .close-btn:hover { color: var(--fg); }
+  .modal-body { padding: 16px 20px; flex: 1; overflow-y: auto; }
+  .modal-body::-webkit-scrollbar { width: 6px; } .modal-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .modal-footer { padding: 12px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
+  .modal input[type="text"] { width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font-size: 13px; outline: none; margin-bottom: 12px; }
+  .modal input[type="text"]:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(88,166,255,.25); }
+  .modal label { display: block; font-size: 12px; color: var(--fg2); margin-bottom: 4px; font-weight: 500; }
+  .modal select { width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font-size: 13px; outline: none; margin-bottom: 12px; }
+
+  .btn { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--fg); font-size: 13px; cursor: pointer; transition: all .15s; }
+  .btn:hover { border-color: var(--fg2); }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn-primary:hover { background: #4a94e8; }
+  .btn-danger { border-color: var(--err); color: var(--err); }
+  .btn-danger:hover { background: rgba(248,81,73,.1); }
+
+  /* Directory browser */
+  .dir-browser { max-height: 280px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+  .dir-browser::-webkit-scrollbar { width: 6px; } .dir-browser::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .dir-entry { display: flex; align-items: center; gap: 8px; padding: 6px 12px; cursor: pointer; font-size: 13px; color: var(--fg2); border-bottom: 1px solid rgba(48,54,61,.5); }
+  .dir-entry:last-child { border-bottom: none; }
+  .dir-entry:hover { background: var(--bg3); color: var(--fg); }
+  .dir-entry .dir-icon { flex-shrink: 0; font-size: 14px; opacity: .6; }
+  .dir-entry .dir-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dir-current { padding: 6px 12px; font-size: 12px; color: var(--fg2); display: flex; align-items: center; gap: 6px; border-bottom: 1px solid var(--border); background: var(--bg3); font-family: monospace; word-break: break-all; }
+  .dir-parent { color: var(--accent); cursor: pointer; }
+  .dir-parent:hover { text-decoration: underline; }
+  .dir-md-count { font-size: 11px; color: var(--accent2); padding: 1px 6px; background: rgba(63,185,80,.1); border-radius: 8px; flex-shrink: 0; }
+
+  /* ── Back to Top Button ── */
+  #back-to-top {
+    position: fixed; bottom: 32px; right: 32px;
+    width: 42px; height: 42px; border-radius: 50%;
+    background: var(--accent); color: #fff; border: none;
+    cursor: pointer; font-size: 20px; line-height: 1;
+    display: none; align-items: center; justify-content: center;
+    box-shadow: 0 2px 12px rgba(0,0,0,.35);
+    z-index: 100; transition: opacity .2s, transform .2s;
+  }
+  #back-to-top:hover { transform: scale(1.12); }
+  #back-to-top.visible { display: flex; }
+
+  /* ── Loading indicator ── */
+  .loading { display: flex; align-items: center; gap: 8px; padding: 16px; color: var(--fg2); font-size: 13px; }
+  .spinner { width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Stats bar ── */
+  #stats-bar { padding: 4px 16px; font-size: 11px; color: var(--fg2); border-top: 1px solid var(--border); background: var(--bg2); display: flex; gap: 12px; }
+
+  @media (max-width: 860px) {
+    :root { --sidebar-w: 260px; }
+    #content-wrap { padding: 20px 20px 48px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Sidebar ── -->
+<div id="sidebar">
+  <div id="sidebar-header">
+    <h1>MarkView <span>local</span></h1>
+    <div id="ws-bar">
+      <select id="ws-select"><option value="">-- no workspace --</option></select>
+      <button class="ws-btn" id="ws-add-btn" title="Add workspace">+</button>
+      <button class="ws-btn danger" id="ws-del-btn" title="Remove workspace">-</button>
+    </div>
+    <div id="branch-indicator"></div>
+    <input id="search-box" type="text" placeholder="Search docs... (Cmd+K)">
+  </div>
+  <div id="nav"></div>
+  <div id="stats-bar"></div>
+</div>
+
+<!-- ── Main ── -->
+<div id="main">
+  <div id="topbar">
+    <div id="breadcrumb"></div>
+  </div>
+  <div id="content-wrap" class="md">
+    <div id="welcome">
+      <h2>MarkView</h2>
+      <p>Local Markdown Documentation Viewer</p>
+      <p style="margin-top:16px;">Add a workspace to start browsing your local markdown files.</p>
+      <p style="margin-top:6px;">Click <strong>+</strong> in the sidebar to select a folder.</p>
+      <div class="hint" style="margin-top:24px;">
+        <kbd>Cmd+K</kbd> Search &nbsp;&middot;&nbsp; Navigate with sidebar tree
+      </div>
+    </div>
+  </div>
+  <button id="back-to-top" title="Back to Top">&#8593;</button>
+</div>
+
+<!-- ── Add Workspace Modal ── -->
+<div class="modal-overlay hidden" id="modal-add">
+  <div class="modal">
+    <div class="modal-head">
+      Add Workspace
+      <button class="close-btn" onclick="closeModal('modal-add')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <label for="add-ws-name">Workspace Name</label>
+      <input type="text" id="add-ws-name" placeholder="e.g. My Project Docs">
+
+      <label>Path</label>
+      <input type="text" id="add-ws-path" placeholder="Start typing or browse below...">
+      <div class="dir-browser" id="dir-browser">
+        <div class="loading"><div class="spinner"></div> Loading...</div>
+      </div>
+
+      <div style="margin-top: 16px;">
+        <label for="add-ws-mode">Mode</label>
+        <select id="add-ws-mode">
+          <option value="workspace">Workspace (independent)</option>
+          <option value="branch">Branch (under existing workspace)</option>
+        </select>
+      </div>
+
+      <div id="add-ws-parent-wrap" style="display:none;">
+        <label for="add-ws-parent">Parent Workspace</label>
+        <select id="add-ws-parent"></select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('modal-add')">Cancel</button>
+      <button class="btn btn-primary" id="add-ws-submit">Add</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════
+// State
+// ════════════════════════════════════════════════════════════
+let workspaces = [];
+let currentWsId = null;       // active workspace (or branch) id
+let currentTree = [];         // file tree for active workspace
+let currentFilePath = null;   // relative path of currently displayed file
+let searchTimeout = null;
+const docCache = {};
+
+// ════════════════════════════════════════════════════════════
+// DOM refs
+// ════════════════════════════════════════════════════════════
+const $nav = document.getElementById('nav');
+const $content = document.getElementById('content-wrap');
+const $search = document.getElementById('search-box');
+const $breadcrumb = document.getElementById('breadcrumb');
+const $wsSelect = document.getElementById('ws-select');
+const $statsBar = document.getElementById('stats-bar');
+const $branchIndicator = document.getElementById('branch-indicator');
+const $btt = document.getElementById('back-to-top');
+
+// ════════════════════════════════════════════════════════════
+// API helpers
+// ════════════════════════════════════════════════════════════
+async function api(method, url, body) {
+  const opts = { method, headers: {} };
+  if (body) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  const resp = await fetch(url, opts);
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ error: resp.statusText }));
+    throw new Error(err.error || resp.statusText);
+  }
+  const ct = resp.headers.get('content-type') || '';
+  if (ct.includes('json')) return resp.json();
+  return resp.text();
+}
+
+// ════════════════════════════════════════════════════════════
+// Minimal Markdown -> HTML renderer (forked from viewer.html)
+// ════════════════════════════════════════════════════════════
+function renderMd(src) {
+  if (!src) return '<p style="color:var(--fg2)"><em>No content</em></p>';
+  let html = '';
+  const lines = src.split('\n');
+  let inCode = false, codeLines = [];
+  let inTable = false, tableRows = [];
+  let inList = false, listType = '', listItems = [];
+
+  function flushList() {
+    if (!inList) return;
+    const tag = listType === 'ol' ? 'ol' : 'ul';
+    html += '<' + tag + '>' + listItems.join('') + '</' + tag + '>';
+    inList = false; listItems = [];
+  }
+  function flushTable() {
+    if (!inTable) return;
+    let t = '<table><thead><tr>';
+    const hdr = tableRows[0];
+    hdr.forEach(c => t += '<th>' + inlineMd(c.trim()) + '</th>');
+    t += '</tr></thead><tbody>';
+    for (let i = 2; i < tableRows.length; i++) {
+      t += '<tr>';
+      tableRows[i].forEach(c => t += '<td>' + inlineMd(c.trim()) + '</td>');
+      t += '</tr>';
+    }
+    t += '</tbody></table>';
+    html += t;
+    inTable = false; tableRows = [];
+  }
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Code blocks
+    if (line.startsWith('```')) {
+      if (inCode) {
+        html += '<pre><code>' + escHtml(codeLines.join('\n')) + '</code></pre>';
+        inCode = false; codeLines = [];
+      } else {
+        flushList(); flushTable();
+        inCode = true;
+      }
+      continue;
+    }
+    if (inCode) { codeLines.push(line); continue; }
+
+    // Table
+    if (line.includes('|') && line.trim().startsWith('|')) {
+      flushList();
+      const cells = line.split('|').slice(1, -1);
+      if (!inTable) inTable = true;
+      tableRows.push(cells);
+      continue;
+    } else if (inTable) { flushTable(); }
+
+    // Headings
+    const hm = line.match(/^(#{1,6})\s+(.*)$/);
+    if (hm) {
+      flushList();
+      const lvl = hm[1].length;
+      html += '<h' + lvl + ' id="' + slugify(hm[2]) + '">' + inlineMd(hm[2]) + '</h' + lvl + '>';
+      continue;
+    }
+
+    // HR
+    if (/^---+$/.test(line.trim())) { flushList(); html += '<hr>'; continue; }
+
+    // Blockquote
+    if (line.startsWith('>')) {
+      flushList();
+      let bq = line.replace(/^>\s?/, '');
+      while (i + 1 < lines.length && (lines[i+1].startsWith('>') || (lines[i+1].trim() && !lines[i+1].startsWith('#')))) {
+        i++;
+        if (lines[i].startsWith('>')) bq += ' ' + lines[i].replace(/^>\s?/, '');
+        else break;
+      }
+      html += '<blockquote><p>' + inlineMd(bq) + '</p></blockquote>';
+      continue;
+    }
+
+    // Checkbox list items
+    const cbm = line.match(/^(\s*)- \[([ xX])\]\s+(.*)$/);
+    if (cbm) {
+      if (!inList) { flushTable(); inList = true; listType = 'ul'; }
+      const checked = cbm[2] !== ' ' ? ' checked disabled' : ' disabled';
+      listItems.push('<li class="task-list-item"><input type="checkbox"' + checked + '>' + inlineMd(cbm[3]) + '</li>');
+      continue;
+    }
+
+    // List items
+    const ulm = line.match(/^(\s*)-\s+(.*)$/);
+    const olm = line.match(/^(\s*)\d+\.\s+(.*)$/);
+    if (ulm || olm) {
+      if (!inList) { flushTable(); inList = true; listType = olm ? 'ol' : 'ul'; }
+      listItems.push('<li>' + inlineMd((ulm || olm)[2]) + '</li>');
+      continue;
+    } else if (inList && line.trim() === '') { flushList(); }
+
+    // Paragraph
+    if (line.trim() === '') { flushList(); continue; }
+    flushList();
+    html += '<p>' + inlineMd(line) + '</p>';
+  }
+  flushList(); flushTable();
+  if (inCode) html += '<pre><code>' + escHtml(codeLines.join('\n')) + '</code></pre>';
+  return html;
+}
+
+function inlineMd(s) {
+  return escHtml(s)
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img alt="$1" src="$2">')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, function(_m, text, href) {
+      return '<a href="#" onclick="handleLink(\'' + escAttr(href) + '\');return false;">' + text + '</a>';
+    })
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/~~(.+?)~~/g, '<del>$1</del>');
+}
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function escAttr(s) { return s.replace(/'/g, "\\'").replace(/\\/g, '\\\\'); }
+function slugify(s) { return s.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff \-]/g, '').replace(/\s+/g, '-').replace(/^-|-$/g, ''); }
+
+// ════════════════════════════════════════════════════════════
+// Workspace management
+// ════════════════════════════════════════════════════════════
+
+async function loadWorkspaces() {
+  workspaces = await api('GET', '/api/workspaces');
+  renderWsSelect();
+  renderBranchIndicator();
+}
+
+function renderWsSelect() {
+  let html = '<option value="">-- select workspace --</option>';
+  // Show only top-level workspaces in the dropdown (not branches)
+  const topLevel = workspaces.filter(w => w.mode !== 'branch');
+  topLevel.forEach(w => {
+    const sel = w.id === currentWsId ? ' selected' : '';
+    const branches = workspaces.filter(b => b.parentId === w.id);
+    const branchLabel = branches.length > 0 ? ' [' + (branches.length + 1) + ']' : '';
+    html += '<option value="' + w.id + '"' + sel + '>' + escHtml(w.name) + branchLabel + '</option>';
+  });
+  $wsSelect.innerHTML = html;
+}
+
+function renderBranchIndicator() {
+  if (!currentWsId) {
+    $branchIndicator.className = '';
+    $branchIndicator.innerHTML = '';
+    return;
+  }
+
+  const ws = workspaces.find(w => w.id === currentWsId);
+  if (!ws) return;
+
+  // Find parent workspace id (either self if workspace, or parentId if branch)
+  const parentId = ws.mode === 'branch' ? ws.parentId : ws.id;
+  const parent = workspaces.find(w => w.id === parentId);
+  const branches = workspaces.filter(w => w.parentId === parentId);
+
+  if (branches.length === 0 && ws.mode !== 'branch') {
+    // No branches, hide indicator
+    $branchIndicator.className = '';
+    $branchIndicator.innerHTML = '';
+    return;
+  }
+
+  let html = '';
+  // Parent as first "branch"
+  if (parent) {
+    const active = currentWsId === parent.id ? ' active' : '';
+    html += '<button class="branch-tag' + active + '" onclick="switchWorkspace(\'' + parent.id + '\')">' + escHtml(parent.name) + '</button>';
+  }
+  branches.forEach(b => {
+    const active = currentWsId === b.id ? ' active' : '';
+    html += '<button class="branch-tag' + active + '" onclick="switchWorkspace(\'' + b.id + '\')">' + escHtml(b.name) + '</button>';
+  });
+  html += '<button class="branch-tag-add" onclick="openAddModal(\'branch\', \'' + parentId + '\')" title="Add branch">+</button>';
+
+  $branchIndicator.className = 'visible';
+  $branchIndicator.innerHTML = html;
+}
+
+async function switchWorkspace(id) {
+  currentWsId = id;
+  currentFilePath = null;
+  localStorage.setItem('markview_ws', id);
+  renderWsSelect();
+  renderBranchIndicator();
+  await loadTree();
+  showWelcome();
+}
+
+async function loadTree() {
+  if (!currentWsId) {
+    currentTree = [];
+    $nav.innerHTML = '';
+    $statsBar.textContent = '';
+    return;
+  }
+
+  $nav.innerHTML = '<div class="loading"><div class="spinner"></div> Scanning files...</div>';
+  try {
+    const data = await api('GET', '/api/tree/' + currentWsId);
+    currentTree = data.tree;
+    $statsBar.textContent = data.totalFiles + ' markdown files';
+    renderNav();
+  } catch (e) {
+    $nav.innerHTML = '<div style="padding:16px;color:var(--err);font-size:13px;">Error: ' + escHtml(e.message) + '</div>';
+    $statsBar.textContent = 'Error loading tree';
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// Navigation rendering
+// ════════════════════════════════════════════════════════════
+function renderNav(filter) {
+  const q = (filter || '').toLowerCase();
+  if (q.length >= 2) {
+    renderSearchResults(q);
+    return;
+  }
+
+  let html = '';
+  function renderNode(node, depth) {
+    if (node.type === 'dir') {
+      html += '<div class="nav-section">';
+      html += '<div class="nav-section-title" onclick="this.parentElement.classList.toggle(\'collapsed\')">';
+      html += '<span class="arrow">&#9660;</span> ' + escHtml(node.name);
+      html += '</div>';
+      html += '<div class="nav-items">';
+      node.children.forEach(child => renderNode(child, depth + 1));
+      html += '</div></div>';
+    } else {
+      const cls = node.path === currentFilePath ? ' active' : '';
+      const nestCls = depth > 0 ? ' nested-' + Math.min(depth, 3) : '';
+      const label = node.name.replace(/\.(md|markdown|mdown|mkd|mdx)$/i, '');
+      html += '<a class="nav-item' + cls + nestCls + '" data-path="' + escHtml(node.path) + '" onclick="openFile(\'' + escAttr(node.path) + '\')">' + escHtml(label) + '</a>';
+    }
+  }
+
+  // Render top-level files first, then dirs
+  const files = currentTree.filter(n => n.type === 'file');
+  const dirs = currentTree.filter(n => n.type === 'dir');
+  files.forEach(f => renderNode(f, 0));
+  dirs.forEach(d => renderNode(d, 0));
+
+  if (currentTree.length === 0) {
+    html = '<div style="padding:20px;text-align:center;color:var(--fg2);font-size:13px;">No markdown files found</div>';
+  }
+  $nav.innerHTML = html;
+}
+
+async function renderSearchResults(q) {
+  if (!currentWsId) return;
+
+  $nav.innerHTML = '<div class="loading"><div class="spinner"></div> Searching...</div>';
+  try {
+    const results = await api('GET', '/api/search/' + currentWsId + '?q=' + encodeURIComponent(q));
+    if (results.length === 0) {
+      $nav.innerHTML = '<div style="padding:20px;text-align:center;color:var(--fg2);font-size:13px;">No results</div>';
+      return;
+    }
+    let html = '';
+    results.forEach(r => {
+      html += '<div class="search-result" onclick="openFile(\'' + escAttr(r.path) + '\')">';
+      html += '<div class="sr-title">' + highlightMatch(escHtml(r.title), q) + '</div>';
+      html += '<div class="sr-path">' + escHtml(r.path) + '</div>';
+      if (r.snippet) {
+        html += '<div class="sr-snippet">...' + highlightMatch(escHtml(r.snippet), q) + '...</div>';
+      }
+      html += '</div>';
+    });
+    $nav.innerHTML = html;
+  } catch {
+    $nav.innerHTML = '<div style="padding:16px;color:var(--err);font-size:13px;">Search failed</div>';
+  }
+}
+
+function highlightMatch(text, q) {
+  if (!q) return text;
+  const re = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
+  return text.replace(re, '<span class="search-highlight">$1</span>');
+}
+
+// ════════════════════════════════════════════════════════════
+// File opening
+// ════════════════════════════════════════════════════════════
+async function openFile(relPath) {
+  if (!currentWsId) return;
+  currentFilePath = relPath;
+  $search.value = '';
+  renderNav();
+
+  $content.innerHTML = '<div class="loading"><div class="spinner"></div> Loading...</div>';
+
+  const cacheKey = currentWsId + ':' + relPath;
+  let text;
+  if (docCache[cacheKey]) {
+    text = docCache[cacheKey];
+  } else {
+    try {
+      text = await api('GET', '/api/file/' + currentWsId + '/' + relPath);
+      docCache[cacheKey] = text;
+    } catch (e) {
+      $content.innerHTML = '<div style="padding:20px;color:var(--err);">Failed to load: ' + escHtml(e.message) + '</div>';
+      return;
+    }
+  }
+
+  $content.innerHTML = renderMd(text);
+
+  // Breadcrumb
+  const parts = relPath.split('/');
+  let bc = '';
+  parts.forEach((part, idx) => {
+    if (idx > 0) bc += '<span class="sep">&#8250;</span>';
+    if (idx === parts.length - 1) {
+      bc += '<span>' + escHtml(part) + '</span>';
+    } else {
+      bc += '<span>' + escHtml(part) + '</span>';
+    }
+  });
+  $breadcrumb.innerHTML = bc;
+}
+
+function showWelcome() {
+  $content.innerHTML = document.getElementById('welcome') ? document.getElementById('welcome').outerHTML : '';
+  $breadcrumb.innerHTML = '';
+  // Re-show welcome content
+  if (!currentWsId) {
+    $content.innerHTML = '<div id="welcome"><h2>MarkView</h2><p>Local Markdown Documentation Viewer</p><p style="margin-top:16px;">Add a workspace to start browsing.</p><p style="margin-top:6px;">Click <strong>+</strong> in the sidebar.</p></div>';
+  } else {
+    const ws = workspaces.find(w => w.id === currentWsId);
+    const name = ws ? ws.name : '';
+    $content.innerHTML = '<div id="welcome"><h2>' + escHtml(name) + '</h2><p>Select a document from the sidebar to start reading.</p><div class="hint" style="margin-top:24px;"><kbd>Cmd+K</kbd> Search</div></div>';
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// In-document link handling
+// ════════════════════════════════════════════════════════════
+function handleLink(href) {
+  // Anchor links
+  if (href.startsWith('#')) {
+    const anchorId = href.slice(1);
+    const target = document.getElementById(slugify(decodeURIComponent(anchorId))) || document.getElementById(anchorId);
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+
+  // Relative file links
+  if (currentFilePath && !href.startsWith('http')) {
+    // Resolve relative to current file's directory
+    const dir = currentFilePath.includes('/') ? currentFilePath.substring(0, currentFilePath.lastIndexOf('/')) : '';
+    let resolved = href;
+
+    // Handle anchor within linked file
+    let anchor = '';
+    if (href.includes('#')) {
+      const parts = href.split('#');
+      resolved = parts[0];
+      anchor = parts[1];
+    }
+
+    if (resolved) {
+      // Resolve relative path
+      if (dir && !resolved.startsWith('/')) {
+        resolved = dir + '/' + resolved;
+      }
+      // Normalize .. and .
+      const segments = resolved.split('/');
+      const normalized = [];
+      for (const seg of segments) {
+        if (seg === '..') normalized.pop();
+        else if (seg !== '.' && seg !== '') normalized.push(seg);
+      }
+      resolved = normalized.join('/');
+
+      // Check if file exists in tree
+      if (fileExistsInTree(resolved)) {
+        openFile(resolved);
+        return;
+      }
+    }
+  }
+
+  // External links
+  if (href.startsWith('http')) {
+    window.open(href, '_blank');
+  }
+}
+
+function fileExistsInTree(path) {
+  function search(nodes) {
+    for (const n of nodes) {
+      if (n.type === 'file' && n.path === path) return true;
+      if (n.children && search(n.children)) return true;
+    }
+    return false;
+  }
+  return search(currentTree);
+}
+
+// ════════════════════════════════════════════════════════════
+// Modal management
+// ════════════════════════════════════════════════════════════
+function openModal(id) {
+  document.getElementById(id).classList.remove('hidden');
+}
+function closeModal(id) {
+  document.getElementById(id).classList.add('hidden');
+}
+
+// ════════════════════════════════════════════════════════════
+// Add workspace modal
+// ════════════════════════════════════════════════════════════
+let currentBrowsePath = null;
+
+function openAddModal(mode, parentId) {
+  document.getElementById('add-ws-name').value = '';
+  document.getElementById('add-ws-path').value = '';
+  document.getElementById('add-ws-mode').value = mode || 'workspace';
+
+  // If branch mode, pre-select parent
+  const parentWrap = document.getElementById('add-ws-parent-wrap');
+  const parentSelect = document.getElementById('add-ws-parent');
+  if (mode === 'branch' && parentId) {
+    parentWrap.style.display = '';
+    let phtml = '';
+    workspaces.filter(w => w.mode !== 'branch').forEach(w => {
+      const sel = w.id === parentId ? ' selected' : '';
+      phtml += '<option value="' + w.id + '"' + sel + '>' + escHtml(w.name) + '</option>';
+    });
+    parentSelect.innerHTML = phtml;
+  } else {
+    parentWrap.style.display = 'none';
+  }
+
+  openModal('modal-add');
+  browseDir(null);  // start at home
+}
+
+async function browseDir(dir) {
+  const browser = document.getElementById('dir-browser');
+  browser.innerHTML = '<div class="loading"><div class="spinner"></div> Loading...</div>';
+
+  try {
+    const params = dir ? '?dir=' + encodeURIComponent(dir) : '';
+    const data = await api('GET', '/api/browse' + params);
+    currentBrowsePath = data.current;
+    document.getElementById('add-ws-path').value = data.current;
+
+    let html = '<div class="dir-current">';
+    if (data.parent) {
+      html += '<span class="dir-parent" onclick="browseDir(\'' + escAttr(data.parent) + '\')">&larr; up</span> ';
+    }
+    html += escHtml(data.current);
+    if (data.mdCount > 0) html += ' <span class="dir-md-count">' + data.mdCount + ' md</span>';
+    html += '</div>';
+
+    data.dirs.forEach(d => {
+      html += '<div class="dir-entry" onclick="browseDir(\'' + escAttr(d.path) + '\')">';
+      html += '<span class="dir-icon">&#128193;</span>';
+      html += '<span class="dir-name">' + escHtml(d.name) + '</span>';
+      html += '</div>';
+    });
+
+    if (data.dirs.length === 0) {
+      html += '<div style="padding:12px;text-align:center;color:var(--fg2);font-size:12px;">No subdirectories</div>';
+    }
+
+    browser.innerHTML = html;
+  } catch (e) {
+    browser.innerHTML = '<div style="padding:12px;color:var(--err);font-size:13px;">Error: ' + escHtml(e.message) + '</div>';
+  }
+}
+
+// Mode toggle
+document.getElementById('add-ws-mode').addEventListener('change', function() {
+  const parentWrap = document.getElementById('add-ws-parent-wrap');
+  const parentSelect = document.getElementById('add-ws-parent');
+  if (this.value === 'branch') {
+    parentWrap.style.display = '';
+    let phtml = '';
+    workspaces.filter(w => w.mode !== 'branch').forEach(w => {
+      phtml += '<option value="' + w.id + '">' + escHtml(w.name) + '</option>';
+    });
+    parentSelect.innerHTML = phtml;
+  } else {
+    parentWrap.style.display = 'none';
+  }
+});
+
+// Path input — manual typing triggers browse
+document.getElementById('add-ws-path').addEventListener('change', function() {
+  if (this.value) browseDir(this.value);
+});
+
+// Submit
+document.getElementById('add-ws-submit').addEventListener('click', async function() {
+  const name = document.getElementById('add-ws-name').value.trim();
+  const rootPath = document.getElementById('add-ws-path').value.trim();
+  const mode = document.getElementById('add-ws-mode').value;
+  const parentId = mode === 'branch' ? document.getElementById('add-ws-parent').value : null;
+
+  if (!name) { alert('Please enter a workspace name.'); return; }
+  if (!rootPath) { alert('Please select a path.'); return; }
+
+  try {
+    const ws = await api('POST', '/api/workspaces', { name, rootPath, mode, parentId });
+    closeModal('modal-add');
+    await loadWorkspaces();
+    switchWorkspace(ws.id);
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+});
+
+// ════════════════════════════════════════════════════════════
+// Workspace controls
+// ════════════════════════════════════════════════════════════
+document.getElementById('ws-add-btn').addEventListener('click', () => openAddModal());
+
+document.getElementById('ws-del-btn').addEventListener('click', async () => {
+  if (!currentWsId) return;
+  const ws = workspaces.find(w => w.id === currentWsId);
+  if (!ws) return;
+  if (!confirm('Remove workspace "' + ws.name + '"?')) return;
+
+  try {
+    await api('DELETE', '/api/workspaces/' + currentWsId);
+    currentWsId = null;
+    currentTree = [];
+    currentFilePath = null;
+    localStorage.removeItem('markview_ws');
+    await loadWorkspaces();
+    renderNav();
+    showWelcome();
+    $statsBar.textContent = '';
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+});
+
+$wsSelect.addEventListener('change', function() {
+  const id = this.value;
+  if (!id) {
+    currentWsId = null;
+    currentTree = [];
+    renderNav();
+    showWelcome();
+    $statsBar.textContent = '';
+    $branchIndicator.className = '';
+    $branchIndicator.innerHTML = '';
+    return;
+  }
+  switchWorkspace(id);
+});
+
+// ════════════════════════════════════════════════════════════
+// Search
+// ════════════════════════════════════════════════════════════
+$search.addEventListener('input', function() {
+  clearTimeout(searchTimeout);
+  const q = this.value;
+  if (q.length < 2) {
+    renderNav();
+    return;
+  }
+  // Debounce server search
+  searchTimeout = setTimeout(() => renderNav(q), 250);
+});
+
+document.addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); $search.focus(); $search.select(); }
+  if (e.key === 'Escape') {
+    if (document.activeElement === $search) {
+      $search.value = '';
+      $search.blur();
+      renderNav();
+    }
+    // Close any open modal
+    document.querySelectorAll('.modal-overlay:not(.hidden)').forEach(m => m.classList.add('hidden'));
+  }
+});
+
+// ════════════════════════════════════════════════════════════
+// Back to Top
+// ════════════════════════════════════════════════════════════
+$content.addEventListener('scroll', () => {
+  $btt.classList.toggle('visible', $content.scrollTop > 300);
+});
+$btt.addEventListener('click', () => {
+  $content.scrollTo({ top: 0, behavior: 'smooth' });
+});
+
+// ════════════════════════════════════════════════════════════
+// Init
+// ════════════════════════════════════════════════════════════
+(async function init() {
+  await loadWorkspaces();
+
+  // Restore last workspace
+  const saved = localStorage.getItem('markview_ws');
+  if (saved && workspaces.find(w => w.id === saved)) {
+    await switchWorkspace(saved);
+  } else {
+    showWelcome();
+  }
+})();
+</script>
+</body>
+</html>
